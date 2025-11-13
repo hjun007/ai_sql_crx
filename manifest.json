@@ -10,6 +10,21 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "commands": {
+    "show-chat": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open custom page"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [ "chat.html" ],
+      "matches": [ "<all_urls>" ]
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
