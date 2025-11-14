@@ -1,1 +1,122 @@
-hello world
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        /* 简单样式，让对话框更像聊天界面 */
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 400px;
+            width: 30%;
+            border: 1px solid #ccc;
+            margin: 0 auto;
+        }
+        #chatHistory {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: #ffffff;
+            border-bottom: 1px solid #ddd;
+        }
+        #chatHistory div {
+            margin-bottom: 0.5rem;
+        }
+        #chatHistory .user {
+            text-align: right;
+            color: #007bff;
+        }
+        #chatHistory .ai {
+            text-align: left;
+            color: #333;
+        }
+        #inputArea {
+            display: flex;
+            padding: 0.5rem;
+            background: #fff;
+        }
+        #req {
+            flex: 1;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-right: 0.5rem;
+        }
+        #send {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            border: none;
+            background: #007bff;
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #send:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <!-- 对话历史显示区域 -->
+    <div id="chatHistory"></div>
+
+    <!-- 输入区域：输入框 + 发送按钮 -->
+    <div id="inputArea">
+        <input type="text" id="req" placeholder="请输入需求">
+        <button id="send">发送</button>
+    </div>
+
+    <script>
+
+        try {
+            chrome.storage.local.get('tableInfo', function(result) {
+                if (result.tableInfo) {
+                    console.log('chat.js: tableInfo get: ', result.tableInfo);
+                } else {
+                    console.log('chat.js: No tableInfo found');
+                    alert('未获取到表结构信息，请先获取');
+                }
+            });
+        } catch (error) {
+            console.error('chat.js: 获取数据失败：', error);
+        }
+
+        const chatHistory = document.getElementById('chatHistory');
+        const input = document.getElementById('req');
+        const sendBtn = document.getElementById('send');
+
+        // 发送消息并更新对话历史
+        function sendMessage() {
+            const text = input.value.trim();
+            if (!text) return;
+
+            // 添加用户消息
+            const userMsg = document.createElement('div');
+            userMsg.className = 'user';
+            userMsg.textContent = text;
+            chatHistory.appendChild(userMsg);
+
+            // 模拟 AI 回复（实际可替换为真实接口）
+            const aiMsg = document.createElement('div');
+            aiMsg.className = 'assistant';
+            chrome.runtime.sendMessage({ type: 'askAI', question: text }, (response) => {
+                aiMsg.textContent = response || 'AI 正在思考……';
+                chatHistory.appendChild(aiMsg);
+            });
+
+            input.value = '';
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
+

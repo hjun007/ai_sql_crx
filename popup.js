@@ -18,15 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.local.set({ interceptEnabled: newState }, () => {
         updateButton(newState);
         
-        // 通知当前标签页更新
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, { 
-              action: 'toggleIntercept', 
-              enabled: newState 
-            });
-          }
-        });
+        
       });
     });
   });
