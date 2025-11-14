@@ -24,19 +24,24 @@ function sendMessageToContentScript(message, tabId) {
     }
 }
 
-function sendToAI(req, table_info) {
+function sendToAI(conversationHistory, table_info) {
   const token = 'sk-d2537aef97064bbfa709dc1accb6f79d';
   const url = 'https://api.deepseek.com/chat/completions';
-  const data = {
-    messages: [
+  
+  // 构建消息列表：系统消息 + 对话历史
+  const messages = [
     {
-        content: '你是一个数据库专家，能够根据给定的表信息和用户请求，生成SQL查询语句。',
+        content: `你是一个数据库专家，能够根据给定的表信息和用户请求，生成SQL查询语句。\n\n表信息：\n${table_info}\n\n请按照用户的要求生成SQL查询语句，只需要输出SQL语句，不需要其他内容。`,
         role: 'system'
-    },
-    {
-        content: `请按照要求和给定的表信息生成SQL查询语句，要求: ${req}, 表信息: ${table_info}, 只需要输出SQL语句，不需要其他内容。`,
-        role: 'user'
-    }],
+    }
+  ];
+  
+  // 添加对话历史（只保留最近20轮对话，避免超出 token 限制）
+  const recentHistory = conversationHistory.slice(-20);
+  messages.push(...recentHistory);
+  
+  const data = {
+    messages: messages,
     model: 'deepseek-chat',
     frequency_penalty: 0,
     max_tokens: 4096,
@@ -113,20 +118,52 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendMessageToContentScript({ type: 'aiResp', status: 'PROCESSING' }, tabId);
 
         // 开始处理AI请求
-        chrome.storage.local.get('tableInfo', async function(result) {
+        if (!tabId) {
+            sendMessageToContentScript({ 
+                type: 'aiResp', 
+                status: 'ERROR', 
+                error: '无法获取标签页信息' 
+            }, tabId);
+            return true;
+        }
+        
+        // 获取对话历史和表信息
+        const conversationKey = `conversation_${tabId}`;
+        chrome.storage.local.get(['tableInfo', conversationKey], async function(result) {
             try {
                 if (result.tableInfo) {
                     console.log('background.js: tableInfo get: ', result.tableInfo);
                     const tableInfo = result.tableInfo;
                     
+                    // 获取或初始化对话历史
+                    let conversationHistory = result[conversationKey] || [];
+                    
+                    // 添加用户问题到对话历史
+                    conversationHistory.push({
+                        role: 'user',
+                        content: request.question
+                    });
+                    
                     // 等待 AI 响应
-                    const resp = await sendToAI(request.question, tableInfo);
+                    const aiResponse = await sendToAI(conversationHistory, tableInfo);
+                    
+                    // 添加 AI 回复到对话历史
+                    conversationHistory.push({
+                        role: 'assistant',
+                        content: aiResponse
+                    });
+                    
+                    // 保存更新后的对话历史（只保留最近30轮对话）
+                    if (conversationHistory.length > 30) {
+                        conversationHistory = conversationHistory.slice(-30);
+                    }
+                    chrome.storage.local.set({ [conversationKey]: conversationHistory });
                     
                     // 发送成功响应（使用发送方的 tab ID）
                     sendMessageToContentScript({ 
                         type: 'aiResp', 
                         status: 'SUCCESS', 
-                        result: resp 
+                        result: aiResponse 
                     }, tabId);
                 } else {
                     console.log('background.js: No tableInfo found');
@@ -145,6 +182,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }, tabId);
             }
         });
+        return true;
+    }
+    
+    // 清空对话历史
+    if (request.type === 'clearConversation') {
+        console.log('background.js: clearConversation received');
+        if (tabId) {
+            const conversationKey = `conversation_${tabId}`;
+            chrome.storage.local.remove(conversationKey, function() {
+                console.log('background.js: conversation cleared for tab:', tabId);
+                sendResponse({ status: 'SUCCESS' });
+            });
+        } else {
+            sendResponse({ status: 'ERROR', error: '无法获取标签页信息' });
+        }
         return true;
     }
 

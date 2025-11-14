@@ -150,7 +150,12 @@ function showChatWindow() {
               color: #fff;
               font-weight: bold;
           }
-          #close-plugin {
+          #header-buttons {
+              display: flex;
+              gap: 0.5rem;
+              align-items: center;
+          }
+          #close-plugin, #clear-chat {
               background: transparent;
               border: none;
               color: #fff;
@@ -160,8 +165,18 @@ function showChatWindow() {
               width: 24px;
               height: 24px;
               line-height: 1;
+              display: flex;
+              align-items: center;
+              justify-content: center;
           }
-          #close-plugin:hover {
+          #clear-chat {
+              font-size: 1rem;
+              width: auto;
+              padding: 0.25rem 0.5rem;
+              border: 1px solid rgba(255,255,255,0.5);
+              border-radius: 4px;
+          }
+          #close-plugin:hover, #clear-chat:hover {
               opacity: 0.8;
           }
           #chatHistory {
@@ -212,7 +227,10 @@ function showChatWindow() {
       <div id="plugin-ui">
         <div id="plugin-header">
             <span>我的AI助手</span>
-            <button id="close-plugin">×</button>
+            <div id="header-buttons">
+                <button id="clear-chat" title="清空对话">清空</button>
+                <button id="close-plugin" title="关闭">×</button>
+            </div>
         </div>
 
         <!-- 对话历史显示区域 -->
@@ -230,6 +248,7 @@ function showChatWindow() {
   const input = shadowRoot.getElementById('req');
   const sendBtn = shadowRoot.getElementById('send');
   const closeBtn = shadowRoot.getElementById('close-plugin');
+  const clearBtn = shadowRoot.getElementById('clear-chat');
 
   // 发送消息并更新对话历史
   function sendMsg() {
@@ -243,23 +262,50 @@ function showChatWindow() {
       chatHistory.appendChild(userMsg);
       console.log('content.js: userMsg added: ', userMsg);
 
-      // 模拟 AI 回复（实际可替换为真实接口）
+      // 创建 AI 回复占位符
       const aiMsg = document.createElement('div');
       aiMsg.className = 'assistant';
+      aiMsg.textContent = 'AI 正在思考……';
+      chatHistory.appendChild(aiMsg);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+
+      // 发送消息给 background script
       chrome.runtime.sendMessage({ type: 'askAI', question: text }, (response) => {
         console.log('content.js: resp received: ', response);
-        if (response && response.status === 'PROCESSING') {
-          aiMsg.textContent = 'AI 正在思考……';
-          chatHistory.appendChild(aiMsg);
-          console.log('content.js: AI processing');
-        }
+        // 响应处理在 onMessage 监听器中完成
       });
 
       input.value = '';
-      chatHistory.scrollTop = chatHistory.scrollHeight;
+  }
+  
+  // 清空对话历史
+  function clearChat() {
+    if (confirm('确定要清空对话历史吗？')) {
+      // 清空显示区域
+      chatHistory.innerHTML = '';
+      
+      // 发送清空请求给 background script
+      chrome.runtime.sendMessage({ type: 'clearConversation' }, (response) => {
+        console.log('content.js: clearConversation response: ', response);
+        if (response && response.status === 'SUCCESS') {
+          console.log('content.js: conversation cleared');
+        }
+      });
+    }
   }
 
   sendBtn.addEventListener('click', sendMsg);
+  
+  // 输入框回车发送
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMsg();
+    }
+  });
+  
+  // 清空按钮功能
+  clearBtn.addEventListener('click', clearChat);
   
   // 关闭按钮功能
   closeBtn.addEventListener('click', function() {
@@ -275,14 +321,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           console.log('content.js: ai resp success: ', request.result);
           // 更新AI回复框
           if (globalShadowRoot) {
-            const aiMsg = globalShadowRoot.querySelector('.assistant:last-of-type');
-            if (aiMsg) {
-              console.log('content.js: aiMsg found: ', aiMsg);
-              aiMsg.textContent = request.result || 'AI 回复';
-            } else {
-              // 如果没有找到现有消息，创建新的
-              const chatHistory = globalShadowRoot.getElementById('chatHistory');
-              if (chatHistory) {
+            const chatHistory = globalShadowRoot.getElementById('chatHistory');
+            if (chatHistory) {
+              // 查找最后一个 assistant 消息（"AI 正在思考……"的占位符）
+              const aiMsg = chatHistory.querySelector('.assistant:last-of-type');
+              if (aiMsg) {
+                console.log('content.js: aiMsg found: ', aiMsg);
+                aiMsg.textContent = request.result || 'AI 回复';
+                // 滚动到底部
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+              } else {
+                // 如果没有找到现有消息，创建新的
                 const newAiMsg = document.createElement('div');
                 newAiMsg.className = 'assistant';
                 newAiMsg.textContent = request.result || 'AI 回复';
@@ -291,17 +340,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               }
             }
           }
-        } else {
+        } else if (request.status === 'ERROR') {
             // 任务失败，显示错误信息
             console.error('content.js: AI response error: ', request.error);
             if (globalShadowRoot) {
               const chatHistory = globalShadowRoot.getElementById('chatHistory');
               if (chatHistory) {
-                const errorMsg = document.createElement('div');
-                errorMsg.className = 'assistant';
-                errorMsg.style.color = '#dc3545';
-                errorMsg.textContent = '错误: ' + (request.error || '未知错误');
-                chatHistory.appendChild(errorMsg);
+                // 查找最后一个 assistant 消息（"AI 正在思考……"的占位符）
+                const aiMsg = chatHistory.querySelector('.assistant:last-of-type');
+                if (aiMsg && aiMsg.textContent === 'AI 正在思考……') {
+                  // 更新占位符为错误消息
+                  aiMsg.textContent = '错误: ' + (request.error || '未知错误');
+                  aiMsg.style.color = '#dc3545';
+                } else {
+                  // 如果没有找到占位符，创建新的错误消息
+                  const errorMsg = document.createElement('div');
+                  errorMsg.className = 'assistant';
+                  errorMsg.style.color = '#dc3545';
+                  errorMsg.textContent = '错误: ' + (request.error || '未知错误');
+                  chatHistory.appendChild(errorMsg);
+                }
                 chatHistory.scrollTop = chatHistory.scrollHeight;
               }
             }
