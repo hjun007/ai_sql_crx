@@ -149,6 +149,8 @@ function showChatWindow() {
               background: #007bff;
               color: #fff;
               font-weight: bold;
+              cursor: move;
+              user-select: none;
           }
           #header-buttons {
               display: flex;
@@ -226,7 +228,7 @@ function showChatWindow() {
 
       <div id="plugin-ui">
         <div id="plugin-header">
-            <span>我的AI助手</span>
+            <span>SQL智能助手</span>
             <div id="header-buttons">
                 <button id="clear-chat" title="清空对话">清空</button>
                 <button id="close-plugin" title="关闭">×</button>
@@ -238,7 +240,7 @@ function showChatWindow() {
 
         <!-- 输入区域：输入框 + 发送按钮 -->
         <div id="inputArea">
-            <input type="text" id="req" placeholder="请输入需求">
+            <input type="text" id="req" placeholder="请输入...">
             <button id="send">发送</button>
         </div>
       </div>
@@ -249,6 +251,7 @@ function showChatWindow() {
   const sendBtn = shadowRoot.getElementById('send');
   const closeBtn = shadowRoot.getElementById('close-plugin');
   const clearBtn = shadowRoot.getElementById('clear-chat');
+  const header = shadowRoot.getElementById('plugin-header');
 
   // 发送消息并更新对话历史
   function sendMsg() {
@@ -310,6 +313,60 @@ function showChatWindow() {
   // 关闭按钮功能
   closeBtn.addEventListener('click', function() {
     pluginContainer.style.display = 'none';
+  });
+
+  // 拖拽功能
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  header.addEventListener('mousedown', function(e) {
+    // 如果点击的是按钮，不触发拖拽
+    if (e.target.closest('button')) {
+      return;
+    }
+    
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    
+    // 获取当前容器的位置
+    const rect = pluginContainer.getBoundingClientRect();
+    initialLeft = rect.left;
+    initialTop = rect.top;
+    
+    // 防止文本选择
+    e.preventDefault();
+  });
+
+  // 在 document 上监听鼠标移动和释放事件，确保即使鼠标移出容器也能继续拖拽
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    
+    const deltaX = e.clientX - dragStartX;
+    const deltaY = e.clientY - dragStartY;
+    
+    // 计算新位置
+    let newLeft = initialLeft + deltaX;
+    let newTop = initialTop + deltaY;
+    
+    // 限制在视窗内
+    const maxLeft = window.innerWidth - pluginContainer.offsetWidth;
+    const maxTop = window.innerHeight - pluginContainer.offsetHeight;
+    
+    newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+    newTop = Math.max(0, Math.min(newTop, maxTop));
+    
+    // 更新位置
+    pluginContainer.style.left = newLeft + 'px';
+    pluginContainer.style.top = newTop + 'px';
+    pluginContainer.style.right = 'auto'; // 清除 right 定位，改用 left
+  });
+
+  document.addEventListener('mouseup', function() {
+    isDragging = false;
   });
 }
 
