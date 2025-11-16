@@ -99,17 +99,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     if (request.type === 'tableInfo') {
         console.log('background.js: tableInfo received, contextId: ', request.contextId);
+        console.log('background.js: tabId: ', tabId);
         if (!request.contextId) {
             console.error('background.js: contextId is missing');
             sendResponse({ status: 'ERROR', error: 'contextId is required' });
             return true;
         }
+        if (!tabId) {
+            console.error('background.js: tabId is missing');
+            sendResponse({ status: 'ERROR', error: 'tabId is required' });
+            return true;
+        }
         
         try {
-            // 使用 contextId 作为 key 存储 tableInfo
-            const tableInfoKey = `tableInfo_${request.contextId}`;
+            // 使用 tabId 和 contextId 作为 key 存储 tableInfo，防止多标签页冲突
+            const tableInfoKey = `tableInfo_${tabId}_${request.contextId}`;
             chrome.storage.local.set({ [tableInfoKey]: request.tableInfo }, function() {
-                console.log('background.js: tableInfo saved for contextId:', request.contextId);
+                console.log('background.js: tableInfo saved for tabId:', tabId, 'contextId:', request.contextId);
                 sendResponse({ status: 'SUCCESS' });
             });
         } catch (error) {
@@ -147,10 +153,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return true;
         }
         
-        // 使用 contextId 获取对话历史和表信息
+        // 使用 tabId 和 contextId 获取对话历史和表信息，防止多标签页冲突
         const contextId = request.contextId;
-        const tableInfoKey = `tableInfo_${contextId}`;
-        const conversationKey = `conversation_${contextId}`;
+        const tableInfoKey = `tableInfo_${tabId}_${contextId}`;
+        const conversationKey = `conversation_${tabId}_${contextId}`;
         
         console.log('background.js: tableInfoKey: ', tableInfoKey);
         console.log('background.js: conversationKey: ', conversationKey);
@@ -215,17 +221,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 获取对话历史
     if (request.type === 'getConversation') {
         console.log('background.js: getConversation received, contextId: ', request.contextId);
+        console.log('background.js: tabId: ', tabId);
         if (!request.contextId) {
             console.error('background.js: contextId is missing in getConversation request');
             sendResponse({ status: 'ERROR', error: 'contextId is required' });
             return true;
         }
+        if (!tabId) {
+            console.error('background.js: tabId is missing in getConversation request');
+            sendResponse({ status: 'ERROR', error: 'tabId is required' });
+            return true;
+        }
         
         const contextId = request.contextId;
-        const conversationKey = `conversation_${contextId}`;
+        const conversationKey = `conversation_${tabId}_${contextId}`;
         chrome.storage.local.get([conversationKey], function(result) {
             const conversationHistory = result[conversationKey] || [];
-            console.log('background.js: conversation history retrieved for contextId:', contextId, conversationHistory);
+            console.log('background.js: conversation history retrieved for tabId:', tabId, 'contextId:', contextId, conversationHistory);
             sendResponse({ status: 'SUCCESS', conversation: conversationHistory });
         });
         return true;
@@ -234,16 +246,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 清空对话历史
     if (request.type === 'clearConversation') {
         console.log('background.js: clearConversation received, contextId: ', request.contextId);
+        console.log('background.js: tabId: ', tabId);
         if (!request.contextId) {
             console.error('background.js: contextId is missing in clearConversation request');
             sendResponse({ status: 'ERROR', error: 'contextId is required' });
             return true;
         }
+        if (!tabId) {
+            console.error('background.js: tabId is missing in clearConversation request');
+            sendResponse({ status: 'ERROR', error: 'tabId is required' });
+            return true;
+        }
         
         const contextId = request.contextId;
-        const conversationKey = `conversation_${contextId}`;
+        const conversationKey = `conversation_${tabId}_${contextId}`;
         chrome.storage.local.remove(conversationKey, function() {
-            console.log('background.js: conversation cleared for contextId:', contextId);
+            console.log('background.js: conversation cleared for tabId:', tabId, 'contextId:', contextId);
             sendResponse({ status: 'SUCCESS' });
         });
         return true;
@@ -255,7 +273,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
+// 清除指定 tabId 的 tableInfo 和对话历史的函数
+function clearStorageDataForTab(tabId) {
+    if (!tabId) {
+        console.error('background.js: tabId is required for clearStorageDataForTab');
+        return;
+    }
+    
+    chrome.storage.local.get(null, function(allItems) {
+        const keysToRemove = [];
+        // 找出所有包含该 tabId 的 tableInfo_ 和 conversation_ 开头的 key
+        // 格式: tableInfo_${tabId}_${contextId} 或 conversation_${tabId}_${contextId}
+        const tabIdPrefix1 = `tableInfo_${tabId}_`;
+        const tabIdPrefix2 = `conversation_${tabId}_`;
+        
+        for (const key in allItems) {
+            if (key.startsWith(tabIdPrefix1) || key.startsWith(tabIdPrefix2)) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        if (keysToRemove.length > 0) {
+            chrome.storage.local.remove(keysToRemove, function() {
+                console.log('background.js: Cleared storage for tabId:', tabId, 'keys:', keysToRemove);
+            });
+        } else {
+            console.log('background.js: No storage data found for tabId:', tabId);
+        }
+    });
+}
 
+// 监听标签页更新事件，当页面加载完成时清除该标签页的存储
+chrome.tabs.onUpdated.addListener(function(tabId, changeInfo, tab) {
+    // 当页面加载完成时（包括首次加载和刷新）
+    if (changeInfo.status === 'complete' && tab.url) {
+        console.log('background.js: Page loaded/refreshed, clearing storage for tab:', tabId);
+        clearStorageDataForTab(tabId);
+    }
+});
+
+// 监听标签页关闭事件，当页面关闭时清除该标签页的存储
+chrome.tabs.onRemoved.addListener(function(tabId) {
+    console.log('background.js: Tab closed, clearing storage for tab:', tabId);
+    clearStorageDataForTab(tabId);
+});
 
 var req1 = `找出年龄最大的10个人的购物情况，包括人员姓名和购物情况。`;
 var tableInfo1 = [
