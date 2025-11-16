@@ -60,7 +60,7 @@ if(!myFrame) {
     rightPage = true;
     console.log('content.js: rightPage set: ', rightPage);
 
-    showChatWindow();
+    showMinimizedIcon();
     return;
   }else
     console.log('content.js: targetDiv not found');
@@ -70,310 +70,8 @@ if(!myFrame) {
   });
 }
 
-
-
-// 将 shadowRoot 定义为全局变量，以便在消息监听器中访问
-let globalShadowRoot = null;
-
-// 隐藏聊天窗口的函数
-function hideChatWindow() {
-  console.log('content.js: hide chat window...');
-  const pluginContainer = document.getElementById('chat-container');
-  if (pluginContainer) {
-    pluginContainer.style.display = 'none';
-    globalShadowRoot = null;
-    console.log('content.js: chat window hidden');
-  }
-}
-
-function showChatWindow() {
-  console.log('content.js: show chat window...');
-  
-  // 检查 body 是否存在
-  if (!document.body) {
-    console.log('content.js: document.body not ready, waiting...');
-    setTimeout(showChatWindow, 100);
-    return;
-  }
-  
-  // 检查是否已经存在容器
-  let pluginContainer = document.getElementById('chat-container');
-  if (pluginContainer) {
-    console.log('content.js: chat container already exists');
-    // 如果容器存在但被隐藏，重新显示
-    if (pluginContainer.style.display === 'none') {
-      pluginContainer.style.display = '';
-      console.log('content.js: chat container re-shown');
-    }
-    return;
-  }
-  
-  // 插件弹出窗口
-  // 创建一个专属的容器div来承载插件UI
-  pluginContainer = document.createElement('div');
-  pluginContainer.id = 'chat-container';
-  // 添加样式确保容器可见
-  pluginContainer.style.position = 'fixed';
-  pluginContainer.style.top = '20px';
-  pluginContainer.style.right = '20px';
-  pluginContainer.style.width = '400px';
-  pluginContainer.style.zIndex = '999999';
-  pluginContainer.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-  document.body.appendChild(pluginContainer);
-
-  // 为这个容器附加一个Shadow Root，开启隔离模式
-  const shadowRoot = pluginContainer.attachShadow({ mode: 'open' });
-  // 保存到全局变量
-  globalShadowRoot = shadowRoot;
-
-  // 在Shadow DOM内部定义你的UI结构和样式
-  shadowRoot.innerHTML = `
-    <style>
-          /* 简单样式，让对话框更像聊天界面 */
-          #plugin-ui {
-              font-family: sans-serif;
-              display: flex;
-              flex-direction: column;
-              height: 500px;
-              width: 100%;
-              border: 1px solid #ccc;
-              border-radius: 8px;
-              background: #fff;
-              overflow: hidden;
-          }
-          #plugin-header {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              padding: 0.75rem 1rem;
-              background: #007bff;
-              color: #fff;
-              font-weight: bold;
-              cursor: move;
-              user-select: none;
-          }
-          #header-buttons {
-              display: flex;
-              gap: 0.5rem;
-              align-items: center;
-          }
-          #close-plugin, #clear-chat {
-              background: transparent;
-              border: none;
-              color: #fff;
-              font-size: 1.5rem;
-              cursor: pointer;
-              padding: 0;
-              width: 24px;
-              height: 24px;
-              line-height: 1;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-          }
-          #clear-chat {
-              font-size: 1rem;
-              width: auto;
-              padding: 0.25rem 0.5rem;
-              border: 1px solid rgba(255,255,255,0.5);
-              border-radius: 4px;
-          }
-          #close-plugin:hover, #clear-chat:hover {
-              opacity: 0.8;
-          }
-          #chatHistory {
-              flex: 1;
-              overflow-y: auto;
-              padding: 1rem;
-              background: #ffffff;
-              border-bottom: 1px solid #ddd;
-          }
-          #chatHistory div {
-              margin-bottom: 0.5rem;
-          }
-          #chatHistory .user {
-              text-align: right;
-              color: #007bff;
-          }
-          #chatHistory .ai {
-              text-align: left;
-              color: #333;
-          }
-          #inputArea {
-              display: flex;
-              padding: 0.5rem;
-              background: #fff;
-          }
-          #req {
-              flex: 1;
-              padding: 0.5rem;
-              font-size: 1rem;
-              border: 1px solid #ccc;
-              border-radius: 4px;
-              margin-right: 0.5rem;
-          }
-          #send {
-              padding: 0.5rem 1rem;
-              font-size: 1rem;
-              border: none;
-              background: #007bff;
-              color: #fff;
-              border-radius: 4px;
-              cursor: pointer;
-          }
-          #send:hover {
-              background: #0056b3;
-          }
-      </style>
-
-      <div id="plugin-ui">
-        <div id="plugin-header">
-            <span>SQL智能助手</span>
-            <div id="header-buttons">
-                <button id="clear-chat" title="清空对话">清空</button>
-                <button id="close-plugin" title="关闭">×</button>
-            </div>
-        </div>
-
-        <!-- 对话历史显示区域 -->
-        <div id="chatHistory"></div>
-
-        <!-- 输入区域：输入框 + 发送按钮 -->
-        <div id="inputArea">
-            <input type="text" id="req" placeholder="请输入...">
-            <button id="send">发送</button>
-        </div>
-      </div>
-    `;
-
-  const chatHistory = shadowRoot.getElementById('chatHistory');
-  const input = shadowRoot.getElementById('req');
-  const sendBtn = shadowRoot.getElementById('send');
-  const closeBtn = shadowRoot.getElementById('close-plugin');
-  const clearBtn = shadowRoot.getElementById('clear-chat');
-  const header = shadowRoot.getElementById('plugin-header');
-
-  // 发送消息并更新对话历史
-  function sendMsg() {
-      const text = input.value.trim();
-      if (!text) return;
-
-      // 添加用户消息
-      const userMsg = document.createElement('div');
-      userMsg.className = 'user';
-      userMsg.textContent = text;
-      chatHistory.appendChild(userMsg);
-      console.log('content.js: userMsg added: ', userMsg);
-
-      // 创建 AI 回复占位符
-      const aiMsg = document.createElement('div');
-      aiMsg.className = 'assistant';
-      aiMsg.textContent = 'AI 正在思考……';
-      chatHistory.appendChild(aiMsg);
-      chatHistory.scrollTop = chatHistory.scrollHeight;
-
-      // 发送消息给 background script
-      chrome.runtime.sendMessage({ type: 'askAI', question: text }, (response) => {
-        console.log('content.js: resp received: ', response);
-        // 响应处理在 onMessage 监听器中完成
-      });
-
-      input.value = '';
-  }
-  
-  // 清空对话历史
-  function clearChat() {
-    if (confirm('确定要清空对话历史吗？')) {
-      // 清空显示区域
-      chatHistory.innerHTML = '';
-      
-      // 发送清空请求给 background script
-      chrome.runtime.sendMessage({ type: 'clearConversation' }, (response) => {
-        console.log('content.js: clearConversation response: ', response);
-        if (response && response.status === 'SUCCESS') {
-          console.log('content.js: conversation cleared');
-        }
-      });
-    }
-  }
-
-  sendBtn.addEventListener('click', sendMsg);
-  
-  // 输入框回车发送
-  input.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMsg();
-    }
-  });
-  
-  // 清空按钮功能
-  clearBtn.addEventListener('click', clearChat);
-  
-  // 关闭按钮功能
-  closeBtn.addEventListener('click', function() {
-    pluginContainer.style.display = 'none';
-  });
-
-  // 拖拽功能
-  let isDragging = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let initialLeft = 0;
-  let initialTop = 0;
-
-  header.addEventListener('mousedown', function(e) {
-    // 如果点击的是按钮，不触发拖拽
-    if (e.target.closest('button')) {
-      return;
-    }
-    
-    isDragging = true;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    
-    // 获取当前容器的位置
-    const rect = pluginContainer.getBoundingClientRect();
-    initialLeft = rect.left;
-    initialTop = rect.top;
-    
-    // 防止文本选择
-    e.preventDefault();
-  });
-
-  // 在 document 上监听鼠标移动和释放事件，确保即使鼠标移出容器也能继续拖拽
-  document.addEventListener('mousemove', function(e) {
-    if (!isDragging) return;
-    
-    const deltaX = e.clientX - dragStartX;
-    const deltaY = e.clientY - dragStartY;
-    
-    // 计算新位置
-    let newLeft = initialLeft + deltaX;
-    let newTop = initialTop + deltaY;
-    
-    // 限制在视窗内
-    const maxLeft = window.innerWidth - pluginContainer.offsetWidth;
-    const maxTop = window.innerHeight - pluginContainer.offsetHeight;
-    
-    newLeft = Math.max(0, Math.min(newLeft, maxLeft));
-    newTop = Math.max(0, Math.min(newTop, maxTop));
-    
-    // 更新位置
-    pluginContainer.style.left = newLeft + 'px';
-    pluginContainer.style.top = newTop + 'px';
-    pluginContainer.style.right = 'auto'; // 清除 right 定位，改用 left
-  });
-
-  document.addEventListener('mouseup', function() {
-    isDragging = false;
-  });
-}
-
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === "aiResp") {
-        console.log("content.js: received ai resp: ", request.result);
-
         if (request.status === 'SUCCESS') {
           console.log('content.js: ai resp success: ', request.result);
           // 更新AI回复框
@@ -384,14 +82,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               const aiMsg = chatHistory.querySelector('.assistant:last-of-type');
               if (aiMsg) {
                 console.log('content.js: aiMsg found: ', aiMsg);
-                aiMsg.textContent = request.result || 'AI 回复';
+                // 使用全局函数设置内容，支持代码块解析和复制功能
+                setAIMessageContentWithCodeBlocks(aiMsg, request.result || 'AI 回复');
                 // 滚动到底部
                 chatHistory.scrollTop = chatHistory.scrollHeight;
               } else {
                 // 如果没有找到现有消息，创建新的
                 const newAiMsg = document.createElement('div');
                 newAiMsg.className = 'assistant';
-                newAiMsg.textContent = request.result || 'AI 回复';
+                // 使用全局函数设置内容
+                setAIMessageContentWithCodeBlocks(newAiMsg, request.result || 'AI 回复');
                 chatHistory.appendChild(newAiMsg);
                 chatHistory.scrollTop = chatHistory.scrollHeight;
               }
