@@ -1,18 +1,9 @@
 
-
-const url = window.location.href;
-console.log('url: ', url);
- 
-var rightPage = false;
 var tableInfo = [];
-
-chrome.runtime.sendMessage({
-  type: 'test'
-});
 
 var myFrame = document.getElementById('content-frame');
 if(!myFrame) {
-  console.log('myFrame not found');
+  console.log('content.js: myFrame not found');
   // 如果没有找到 iframe，隐藏弹窗
   hideChatWindow();
 } else {
@@ -20,8 +11,6 @@ if(!myFrame) {
   console.log('content.js: Frame loaded');
   try {
     var frameDoc = myFrame.contentDocument || myFrame.contentWindow.document;
-
-    // const targetDiv = frameDoc.querySelector('div.lg:col-span-2');
     const targetDiv = frameDoc.getElementById('tools-list');
     if(targetDiv) {
     console.log('content.js: targetDiv: ', targetDiv);
@@ -34,7 +23,6 @@ if(!myFrame) {
     console.log('content.js: tableInfo set: ', tableInfo);
 
     if (tableInfo) {
-      console.log('content.js: tableInfo get: ', tableInfo);
       var table1 = `表名：person
         表结构：
         pid 人员id
@@ -57,9 +45,6 @@ if(!myFrame) {
     }else{
       console.log('content.js: tableInfo not get, page incorrect.');
     }
-    rightPage = true;
-    console.log('content.js: rightPage set: ', rightPage);
-
     showMinimizedIcon();
     return;
   }else
@@ -81,7 +66,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               // 查找最后一个 assistant 消息（"AI 正在思考……"的占位符）
               const aiMsg = chatHistory.querySelector('.assistant:last-of-type');
               if (aiMsg) {
-                console.log('content.js: aiMsg found: ', aiMsg);
                 // 使用全局函数设置内容，支持代码块解析和复制功能
                 setAIMessageContentWithCodeBlocks(aiMsg, request.result || 'AI 回复');
                 // 滚动到底部

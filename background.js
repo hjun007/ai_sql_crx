@@ -69,7 +69,7 @@ function sendToAI(conversationHistory, table_info) {
     },
     body: JSON.stringify(data)
   };
-  console.log('AI req sent: ', options);
+  console.log('background.js: AI req sent: ', options);
   
   // 返回 Promise，正确处理异步响应
   return fetch(url, options)
@@ -80,7 +80,7 @@ function sendToAI(conversationHistory, table_info) {
       return response.json();
     })
     .then(responseData => {
-      console.log('AI response received: ', responseData);
+      console.log('background.js: AI response received: ', responseData);
       // 提取 AI 的回复内容
       if (responseData.choices && responseData.choices.length > 0) {
         return responseData.choices[0].message.content || '';
@@ -88,14 +88,12 @@ function sendToAI(conversationHistory, table_info) {
       return '';
     })
     .catch(error => {
-      console.error('AI request error: ', error);
+      console.error('background.js: AI request error: ', error);
       throw error;
     });
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log('background.js: msg recieved: ', request, sender);
-    
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => { 
     // 获取发送消息的 tab ID
     const tabId = sender.tab ? sender.tab.id : null;
     
@@ -129,6 +127,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
         // 获取对话历史和表信息
         const conversationKey = `conversation_${tabId}`;
+        console.log('background.js: conversationKey: ', conversationKey);
         chrome.storage.local.get(['tableInfo', conversationKey], async function(result) {
             try {
                 if (result.tableInfo) {
@@ -221,16 +220,3 @@ pid 人员id
 goods 物品
 time 购物时间
 price 价格`;
-
-// chrome.commands.onCommand.addListener((command) => {
-//     console.log('background.js: command: ', command);
-//   if (command === 'open-chat-window') {
-//     console.log('background.js: open-chat-window command');
-//     chrome.windows.create({
-//       url: 'chat.html',
-//       type: 'popup',
-//       width: 400,
-//       height: 300
-//     });
-//   }
-// });
