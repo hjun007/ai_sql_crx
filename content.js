@@ -1,58 +1,171 @@
+// 当前活动的上下文 ID（基于 tableInfo 内容生成的唯一标识）
+let currentContextId = null;
+let iframeObserver = null;
 
-var tableInfo = [];
-
-var myFrame = document.getElementById('content-frame');
-if(!myFrame) {
-  console.log('content.js: myFrame not found');
-  // 如果没有找到 iframe，隐藏弹窗
-  hideChatWindow();
-} else {
-  myFrame.addEventListener('load', function() {
-  console.log('content.js: Frame loaded');
-  try {
-    var frameDoc = myFrame.contentDocument || myFrame.contentWindow.document;
-    const targetDiv = frameDoc.getElementById('tools-list');
-    if(targetDiv) {
-    console.log('content.js: targetDiv: ', targetDiv);
-    const listItems = targetDiv.querySelectorAll('h4');
-
-    listItems.forEach(h4Ele => {
-      tableInfo.push(h4Ele.textContent);
-    });
-
-    console.log('content.js: tableInfo set: ', tableInfo);
-
-    if (tableInfo) {
-      var table1 = `表名：person
-        表结构：
-        pid 人员id
-        name 姓名
-        age 年龄
-
-        表名：shopping
-        表结构：
-        pid 人员id
-        goods 物品
-        time 购物时间
-        price 价格`;
-      //tableInfo = table1;
-      chrome.runtime.sendMessage({
-        type: 'tableInfo',
-        tableInfo: table1
-      }, function(response) { 
-        console.log('content.js: resp received: ', response);
-      });
-    }else{
-      console.log('content.js: tableInfo not get, page incorrect.');
+// 生成唯一标识的函数（基于 tableInfo 内容生成 Hash）
+function generateContextId(tableInfoArray) {
+    if (!tableInfoArray || tableInfoArray.length === 0) {
+        return null;
     }
-    showMinimizedIcon();
-    return;
-  }else
-    console.log('content.js: targetDiv not found');
-} catch (error) {
-  console.log('content.js: Error: ', error);
+    
+    // 将 tableInfo 数组转换为排序后的字符串（确保相同内容生成相同 hash）
+    const content = tableInfoArray.slice().sort().join('|');
+    
+    // 生成简单 hash
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+        const char = content.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    
+    return 'ctx_' + Math.abs(hash).toString(36);
 }
-  });
+
+// 格式化 tableInfo 为字符串
+function formatTableInfo(tableInfoArray) {
+    if (!tableInfoArray || tableInfoArray.length === 0) {
+        return '';
+    }
+    
+    // 这里可以根据实际需求格式化
+    // 暂时返回简单的文本格式
+    return tableInfoArray.join('\n');
+}
+
+// 处理 iframe 加载
+function handleIframeLoad(iframe) {
+    // 如果已经添加过监听器，不再重复添加
+    if (iframe.dataset.listenerAdded === 'true') {
+        return;
+    }
+    iframe.dataset.listenerAdded = 'true';
+    
+    const loadHandler = function() {
+        console.log('content.js: Frame loaded');
+        try {
+            const frameDoc = iframe.contentDocument || iframe.contentWindow.document;
+            const targetDiv = frameDoc.getElementById('tools-list');
+            
+            if (targetDiv) {
+                console.log('content.js: targetDiv found: ', targetDiv);
+                const listItems = targetDiv.querySelectorAll('h4');
+                const tableInfo = [];
+                
+                listItems.forEach(h4Ele => {
+                    tableInfo.push(h4Ele.textContent.trim());
+                });
+
+                console.log('content.js: tableInfo extracted: ', tableInfo);
+
+                //在这里设置测试tableInfo的值
+                var tableInfo1 = `{'表名':'person','表结构': {'pid': '人员id', 'name': '姓名', 'age': '年龄'}}`;
+                var tableInfo2 = `{'表名':'shopping','表结构': {'pid': '人员id', 'goods': '物品', 'time': '购物时间', 'price': '价格'}}`;
+                tableInfo.length = 0;//清空tableInfo数组
+                tableInfo.push(tableInfo1);
+                tableInfo.push(tableInfo2);//添加测试tableInfo
+                console.log('content.js: test tableInfo set: ', tableInfo);
+
+                if (tableInfo && tableInfo.length > 0) {
+                    // 生成唯一标识
+                    const contextId = generateContextId(tableInfo);
+                    currentContextId = contextId;
+                    
+                    console.log('content.js: Generated contextId: ', contextId);
+                    
+                    // 格式化 tableInfo
+                    const tableInfoString = formatTableInfo(tableInfo);
+                    
+                    // 发送给 background.js，携带 contextId
+                    chrome.runtime.sendMessage({
+                        type: 'tableInfo',
+                        contextId: contextId,
+                        tableInfo: tableInfoString
+                    }, function(response) { 
+                        console.log('content.js: tableInfo sent, response: ', response);
+                        if (response && response.status === 'SUCCESS') {
+                            showMinimizedIcon();
+                        }
+                    });
+                } else {
+                    console.log('content.js: tableInfo is empty');
+                }
+            } else {
+                console.log('content.js: targetDiv not found');
+            }
+        } catch (error) {
+            console.log('content.js: Error reading iframe:', error);
+        }
+    };
+    
+    iframe.addEventListener('load', loadHandler);
+    
+    // 如果 iframe 已经加载完成，立即触发
+    if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+        loadHandler();
+    }
+}
+
+// 处理 iframe 关闭
+function handleIframeClose() {
+    console.log('content.js: iframe closed');
+    
+    // 隐藏对话框和图标
+    hideChatWindow();
+    if (globalMinimizedIcon) {
+        globalMinimizedIcon.style.display = 'none';
+    }
+    
+    // 清理当前上下文
+    currentContextId = null;
+    
+    console.log('content.js: Context cleared');
+}
+
+// 设置 iframe 监听器
+function setupIframeObserver() {
+    // 先检查是否已经存在 iframe
+    let myFrame = document.getElementById('content-frame');
+    if (myFrame && !myFrame.dataset.tracked) {
+        myFrame.dataset.tracked = 'true';
+        handleIframeLoad(myFrame);
+    }
+    
+    // 使用 MutationObserver 监听 iframe 的创建和销毁
+    iframeObserver = new MutationObserver(function(mutations) {
+        const iframe = document.getElementById('content-frame');
+        
+        if (iframe) {
+            // iframe 存在
+            if (!iframe.dataset.tracked) {
+                // 新创建的 iframe，标记并处理
+                iframe.dataset.tracked = 'true';
+                console.log('content.js: New iframe detected');
+                handleIframeLoad(iframe);
+            }
+        } else {
+            // iframe 不存在
+            if (currentContextId) {
+                // 之前有活动的 iframe，现在被移除了
+                handleIframeClose();
+            }
+        }
+    });
+    
+    // 开始观察
+    iframeObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+    
+    console.log('content.js: Iframe observer setup complete');
+}
+
+// 初始化：等待 DOM 加载完成后设置监听器
+if (document.body) {
+    setupIframeObserver();
+} else {
+    document.addEventListener('DOMContentLoaded', setupIframeObserver);
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

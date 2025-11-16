@@ -79,6 +79,42 @@ function escapeHtmlAttribute(text) {
     .replace(/>/g, '&gt;');
 }
 
+// 判断文本是否看起来像SQL语句
+function looksLikeSQL(text) {
+  if (!text || text.trim().length === 0) return false;
+  
+  const trimmedText = text.trim();
+  
+  // 如果文本太短，不太可能是完整的SQL语句
+  if (trimmedText.length < 10) return false;
+  
+  // SQL 关键字列表（按重要性排序）
+  const sqlKeywords = [
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP',
+    'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'ON',
+    'GROUP BY', 'ORDER BY', 'HAVING', 'UNION', 'DISTINCT',
+    'COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'AS',
+    'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN', 'IS NULL', 'IS NOT NULL',
+    'LIMIT', 'OFFSET', 'TOP', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'
+  ];
+  
+  // 检查是否包含SQL关键字（使用单词边界匹配，避免误匹配）
+  const hasSQLKeyword = sqlKeywords.some(keyword => {
+    const regex = new RegExp('\\b' + keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+    return regex.test(trimmedText);
+  });
+  
+  // 检查是否包含SQL常见的模式（以SQL命令开头）
+  const hasSQLPattern = /^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+/i.test(trimmedText);
+  
+  // 检查是否包含表名模式（如 FROM table_name 或 JOIN table_name）
+  const hasTablePattern = /\bFROM\s+\w+/i.test(trimmedText) || /\bJOIN\s+\w+/i.test(trimmedText);
+  
+  // 如果包含SQL关键字或模式，认为是SQL
+  // 主要检查：是否包含SQL关键字、是否以SQL命令开头、是否包含FROM/JOIN等表操作
+  return hasSQLKeyword || hasSQLPattern || hasTablePattern;
+}
+
 // 解析文本中的代码块并转换为HTML
 function parseMessageWithCodeBlocks(text) {
   if (!text) return '';
@@ -96,7 +132,18 @@ function parseMessageWithCodeBlocks(text) {
     if (match.index > lastIndex) {
       const textPart = text.substring(lastIndex, match.index);
       if (textPart.trim()) {
-        parts.push({ type: 'text', content: escapeHtml(textPart) });
+        // 检查是否看起来像SQL
+        if (looksLikeSQL(textPart)) {
+          parts.push({ 
+            type: 'code', 
+            language: 'sql', 
+            content: escapeHtml(textPart.trim()),
+            rawContent: textPart.trim(),
+            index: codeBlockIndex++
+          });
+        } else {
+          parts.push({ type: 'text', content: escapeHtml(textPart) });
+        }
       }
     }
 
@@ -118,13 +165,34 @@ function parseMessageWithCodeBlocks(text) {
   if (lastIndex < text.length) {
     const textPart = text.substring(lastIndex);
     if (textPart.trim()) {
-      parts.push({ type: 'text', content: escapeHtml(textPart) });
+      // 检查是否看起来像SQL
+      if (looksLikeSQL(textPart)) {
+        parts.push({ 
+          type: 'code', 
+          language: 'sql', 
+          content: escapeHtml(textPart.trim()),
+          rawContent: textPart.trim(),
+          index: codeBlockIndex++
+        });
+      } else {
+        parts.push({ type: 'text', content: escapeHtml(textPart) });
+      }
     }
   }
 
-  // 如果没有匹配到代码块，返回原始文本
+  // 如果没有匹配到代码块，检查整个文本是否像SQL
   if (parts.length === 0) {
-    return escapeHtml(text);
+    if (looksLikeSQL(text)) {
+      parts.push({ 
+        type: 'code', 
+        language: 'sql', 
+        content: escapeHtml(text.trim()),
+        rawContent: text.trim(),
+        index: codeBlockIndex++
+      });
+    } else {
+      return escapeHtml(text);
+    }
   }
 
   // 构建HTML
@@ -344,6 +412,43 @@ function expandChatWindow() {
   // 隐藏图标
   globalMinimizedIcon.style.display = 'none';
   
+  // 如果有 contextId，恢复对话历史
+  if (currentContextId && globalShadowRoot) {
+    const chatHistory = globalShadowRoot.getElementById('chatHistory');
+    if (chatHistory) {
+      // 获取对话历史
+      chrome.runtime.sendMessage({
+        type: 'getConversation',
+        contextId: currentContextId
+      }, function(response) {
+        if (response && response.status === 'SUCCESS' && response.conversation) {
+          const conversation = response.conversation;
+          console.log('content.js: Restoring conversation history:', conversation);
+          
+          // 清空当前显示
+          chatHistory.innerHTML = '';
+          
+          // 恢复对话历史
+          conversation.forEach(msg => {
+            const msgDiv = document.createElement('div');
+            if (msg.role === 'user') {
+              msgDiv.className = 'user';
+              msgDiv.textContent = msg.content;
+            } else if (msg.role === 'assistant') {
+              msgDiv.className = 'assistant';
+              // 使用代码块解析函数来设置内容
+              setAIMessageContentWithCodeBlocks(msgDiv, msg.content);
+            }
+            chatHistory.appendChild(msgDiv);
+          });
+          
+          // 滚动到底部
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+      });
+    }
+  }
+  
   console.log('content.js: chat window expanded');
 }
 
@@ -477,6 +582,41 @@ async function showChatWindow() {
         globalMinimizedIcon.style.display = 'none';
       }
       console.log('content.js: chat container re-shown');
+      
+      // 恢复对话历史
+      if (currentContextId && globalShadowRoot) {
+        const chatHistory = globalShadowRoot.getElementById('chatHistory');
+        if (chatHistory) {
+          chrome.runtime.sendMessage({
+            type: 'getConversation',
+            contextId: currentContextId
+          }, function(response) {
+            if (response && response.status === 'SUCCESS' && response.conversation) {
+              const conversation = response.conversation;
+              console.log('content.js: Restoring conversation history:', conversation);
+              
+              // 清空当前显示
+              chatHistory.innerHTML = '';
+              
+              // 恢复对话历史
+              conversation.forEach(msg => {
+                const msgDiv = document.createElement('div');
+                if (msg.role === 'user') {
+                  msgDiv.className = 'user';
+                  msgDiv.textContent = msg.content;
+                } else if (msg.role === 'assistant') {
+                  msgDiv.className = 'assistant';
+                  setAIMessageContentWithCodeBlocks(msgDiv, msg.content);
+                }
+                chatHistory.appendChild(msgDiv);
+              });
+              
+              // 滚动到底部
+              chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+          });
+        }
+      }
     }
     // 保存到全局变量
     globalPluginContainer = pluginContainer;
@@ -553,6 +693,12 @@ async function showChatWindow() {
   function sendMsg() {
       const text = input.value.trim();
       if (!text) return;
+      
+      // 检查是否有活动的 contextId
+      if (!currentContextId) {
+        alert('请先打开一个 iframe 以获取表信息');
+        return;
+      }
 
       // 添加用户消息
       const userMsg = document.createElement('div');
@@ -568,8 +714,12 @@ async function showChatWindow() {
       chatHistory.appendChild(aiMsg);
       chatHistory.scrollTop = chatHistory.scrollHeight;
 
-      // 发送消息给 background script
-      chrome.runtime.sendMessage({ type: 'askAI', question: text }, (response) => {
+      // 发送消息给 background script，携带 contextId
+      chrome.runtime.sendMessage({ 
+        type: 'askAI', 
+        question: text,
+        contextId: currentContextId
+      }, (response) => {
         console.log('content.js: resp received: ', response);
         // 响应处理在 onMessage 监听器中完成
       });
@@ -580,14 +730,24 @@ async function showChatWindow() {
   // 清空对话历史
   function clearChat() {
     if (confirm('确定要清空对话历史吗？')) {
+      // 检查是否有活动的 contextId
+      if (!currentContextId) {
+        // 即使没有 contextId，也清空显示区域
+        chatHistory.innerHTML = '';
+        return;
+      }
+      
       // 清空显示区域
       chatHistory.innerHTML = '';
       
-      // 发送清空请求给 background script
-      chrome.runtime.sendMessage({ type: 'clearConversation' }, (response) => {
+      // 发送清空请求给 background script，携带 contextId
+      chrome.runtime.sendMessage({ 
+        type: 'clearConversation',
+        contextId: currentContextId
+      }, (response) => {
         console.log('content.js: clearConversation response: ', response);
         if (response && response.status === 'SUCCESS') {
-          console.log('content.js: conversation cleared');
+          console.log('content.js: conversation cleared for contextId:', currentContextId);
         }
       });
     }
@@ -664,5 +824,36 @@ async function showChatWindow() {
   document.addEventListener('mouseup', function() {
     isDragging = false;
   });
+  
+  // 如果有 contextId，恢复对话历史
+  if (currentContextId) {
+    // 获取对话历史
+    chrome.runtime.sendMessage({
+      type: 'getConversation',
+      contextId: currentContextId
+    }, function(response) {
+      if (response && response.status === 'SUCCESS' && response.conversation) {
+        const conversation = response.conversation;
+        console.log('content.js: Restoring conversation history in showChatWindow:', conversation);
+        
+        // 恢复对话历史
+        conversation.forEach(msg => {
+          const msgDiv = document.createElement('div');
+          if (msg.role === 'user') {
+            msgDiv.className = 'user';
+            msgDiv.textContent = msg.content;
+          } else if (msg.role === 'assistant') {
+            msgDiv.className = 'assistant';
+            // 使用代码块解析函数来设置内容
+            setAIMessageContentWithCodeBlocks(msgDiv, msg.content);
+          }
+          chatHistory.appendChild(msgDiv);
+        });
+        
+        // 滚动到底部
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      }
+    });
+  }
 }
 

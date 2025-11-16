@@ -98,19 +98,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const tabId = sender.tab ? sender.tab.id : null;
     
     if (request.type === 'tableInfo') {
-        console.log('background.js: tableInfo received: ', request.tableInfo);
-        try {
-            chrome.storage.local.set({ tableInfo: request.tableInfo });
-            console.log('background.js: tableInfo saved: ', request.tableInfo);
-            } catch (error) {
-            console.error('background.js: 保存数据失败：', error);
+        console.log('background.js: tableInfo received, contextId: ', request.contextId);
+        if (!request.contextId) {
+            console.error('background.js: contextId is missing');
+            sendResponse({ status: 'ERROR', error: 'contextId is required' });
+            return true;
         }
-        sendResponse('SUCCESS');
+        
+        try {
+            // 使用 contextId 作为 key 存储 tableInfo
+            const tableInfoKey = `tableInfo_${request.contextId}`;
+            chrome.storage.local.set({ [tableInfoKey]: request.tableInfo }, function() {
+                console.log('background.js: tableInfo saved for contextId:', request.contextId);
+                sendResponse({ status: 'SUCCESS' });
+            });
+        } catch (error) {
+            console.error('background.js: 保存数据失败：', error);
+            sendResponse({ status: 'ERROR', error: error.message });
+        }
         return true;
     }
     if (request.type === 'askAI') {
         console.log('background.js: askAI received: ', request.question);
+        console.log('background.js: contextId: ', request.contextId);
         console.log('background.js: starting ai processing...');
+        
+        // 检查 contextId
+        if (!request.contextId) {
+            console.error('background.js: contextId is missing in askAI request');
+            sendMessageToContentScript({ 
+                type: 'aiResp', 
+                status: 'ERROR', 
+                error: 'contextId is required' 
+            }, tabId);
+            return true;
+        }
         
         // 发送处理中消息（使用发送方的 tab ID）
         sendMessageToContentScript({ type: 'aiResp', status: 'PROCESSING' }, tabId);
@@ -125,14 +147,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return true;
         }
         
-        // 获取对话历史和表信息
-        const conversationKey = `conversation_${tabId}`;
+        // 使用 contextId 获取对话历史和表信息
+        const contextId = request.contextId;
+        const tableInfoKey = `tableInfo_${contextId}`;
+        const conversationKey = `conversation_${contextId}`;
+        
+        console.log('background.js: tableInfoKey: ', tableInfoKey);
         console.log('background.js: conversationKey: ', conversationKey);
-        chrome.storage.local.get(['tableInfo', conversationKey], async function(result) {
+        
+        chrome.storage.local.get([tableInfoKey, conversationKey], async function(result) {
             try {
-                if (result.tableInfo) {
-                    console.log('background.js: tableInfo get: ', result.tableInfo);
-                    const tableInfo = result.tableInfo;
+                const tableInfo = result[tableInfoKey];
+                
+                if (tableInfo) {
+                    console.log('background.js: tableInfo found for contextId:', contextId);
                     
                     // 获取或初始化对话历史
                     let conversationHistory = result[conversationKey] || [];
@@ -165,7 +193,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         result: aiResponse 
                     }, tabId);
                 } else {
-                    console.log('background.js: No tableInfo found');
+                    console.log('background.js: No tableInfo found for contextId:', contextId);
                     sendMessageToContentScript({ 
                         type: 'aiResp', 
                         status: 'ERROR', 
@@ -184,18 +212,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     
+    // 获取对话历史
+    if (request.type === 'getConversation') {
+        console.log('background.js: getConversation received, contextId: ', request.contextId);
+        if (!request.contextId) {
+            console.error('background.js: contextId is missing in getConversation request');
+            sendResponse({ status: 'ERROR', error: 'contextId is required' });
+            return true;
+        }
+        
+        const contextId = request.contextId;
+        const conversationKey = `conversation_${contextId}`;
+        chrome.storage.local.get([conversationKey], function(result) {
+            const conversationHistory = result[conversationKey] || [];
+            console.log('background.js: conversation history retrieved for contextId:', contextId, conversationHistory);
+            sendResponse({ status: 'SUCCESS', conversation: conversationHistory });
+        });
+        return true;
+    }
+    
     // 清空对话历史
     if (request.type === 'clearConversation') {
-        console.log('background.js: clearConversation received');
-        if (tabId) {
-            const conversationKey = `conversation_${tabId}`;
-            chrome.storage.local.remove(conversationKey, function() {
-                console.log('background.js: conversation cleared for tab:', tabId);
-                sendResponse({ status: 'SUCCESS' });
-            });
-        } else {
-            sendResponse({ status: 'ERROR', error: '无法获取标签页信息' });
+        console.log('background.js: clearConversation received, contextId: ', request.contextId);
+        if (!request.contextId) {
+            console.error('background.js: contextId is missing in clearConversation request');
+            sendResponse({ status: 'ERROR', error: 'contextId is required' });
+            return true;
         }
+        
+        const contextId = request.contextId;
+        const conversationKey = `conversation_${contextId}`;
+        chrome.storage.local.remove(conversationKey, function() {
+            console.log('background.js: conversation cleared for contextId:', contextId);
+            sendResponse({ status: 'SUCCESS' });
+        });
         return true;
     }
 
@@ -208,15 +258,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 var req1 = `找出年龄最大的10个人的购物情况，包括人员姓名和购物情况。`;
-var tableInfo1 = `表名：person
-表结构：
-pid 人员id
-name 姓名
-age 年龄
-
-表名：shopping
-表结构：
-pid 人员id
-goods 物品
-time 购物时间
-price 价格`;
+var tableInfo1 = [
+    {'表名':'person','表结构': {'pid': '人员id', 'name': '姓名', 'age': '年龄'}},
+    {'表名':'shopping','表结构': {'pid': '人员id', 'goods': '物品', 'time': '购物时间', 'price': '价格'}}
+  ];
