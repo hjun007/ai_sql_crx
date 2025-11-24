@@ -27,6 +27,10 @@ function sendMessageToContentScript(message, tabId) {
 function sendToAI(conversationHistory, table_info) {
   const token = 'sk-d2537aef97064bbfa709dc1accb6f79d';
   const url = 'https://api.deepseek.com/chat/completions';
+
+  const api_key = '';
+  const api_url = '';
+  var is_deepseek = true;
   
   // 构建消息列表：系统消息 + 对话历史
   const messages = [
@@ -39,7 +43,17 @@ function sendToAI(conversationHistory, table_info) {
   // 添加对话历史（只保留最近20轮对话，避免超出 token 限制）
   const recentHistory = conversationHistory.slice(-20);
   messages.push(...recentHistory);
-  
+
+    const input_data = {
+        "inputs":{
+        "msg": messages,
+        "table_info": table_info
+        },
+        "response_mode":"blocking",
+        "user":"abc-123"
+    }
+  console.log('background.js: input_data: ', JSON.stringify(input_data));
+
   const data = {
     messages: messages,
     model: 'deepseek-chat',
@@ -65,25 +79,36 @@ function sendToAI(conversationHistory, table_info) {
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Authorization': `Bearer ${token}`
+      'Authorization': is_deepseek ? `Bearer ${token}` : `Bearer ${api_key}`
     },
-    body: JSON.stringify(data)
+    body: is_deepseek ? JSON.stringify(data) : JSON.stringify(input_data)
   };
   console.log('background.js: AI req sent: ', options);
   
   // 返回 Promise，正确处理异步响应
-  return fetch(url, options)
+  return fetch(is_deepseek ? url : api_url, options)
     .then(response => {
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      return response.json();
+      // deepseek 返回 JSON 对象，工作流返回 JSON 字符串
+      return is_deepseek ? response.json() : response.text();
     })
     .then(responseData => {
       console.log('background.js: AI response received: ', responseData);
-      // 提取 AI 的回复内容
-      if (responseData.choices && responseData.choices.length > 0) {
+      // 提取 AI 的回复内容(deepseek的格式)
+      if (is_deepseek && responseData.choices && responseData.choices.length > 0) {
         return responseData.choices[0].message.content || '';
+      } else if (!is_deepseek) {
+        // 工作流输出，整个响应体是json字符串格式：{"data":{"outputs":{"text":"xxxx"}}}
+        try {
+          const parsedData = typeof responseData === 'string' ? JSON.parse(responseData) : responseData;
+          const sql_text = parsedData.data && parsedData.data.outputs && parsedData.data.outputs.text;
+          return sql_text || 'AI 回复失败';
+        } catch (error) {
+          console.error('background.js: JSON解析失败：', error);
+          return 'AI 回复失败：JSON解析错误';
+        }
       }
       return '';
     })

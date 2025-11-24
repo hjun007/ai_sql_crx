@@ -1,6 +1,7 @@
 // 当前活动的上下文 ID（基于 tableInfo 内容生成的唯一标识）
 let currentContextId = null;
 let iframeObserver = null;
+const is_deepseek = true;
 
 // 生成唯一标识的函数（基于 tableInfo 内容生成 Hash）
 function generateContextId(tableInfoArray) {
@@ -8,8 +9,14 @@ function generateContextId(tableInfoArray) {
         return null;
     }
     
-    // 将 tableInfo 数组转换为排序后的字符串（确保相同内容生成相同 hash）
-    const content = tableInfoArray.slice().sort().join('|');
+    // 对于对象数组，使用 JSON.stringify 生成一致的字符串（确保相同内容生成相同 hash）
+    // 先排序数组（基于表名字符串），确保顺序一致
+    const sortedArray = tableInfoArray.slice().sort((a, b) => {
+        const nameA = (a.表名 || a["表名"] || '').toString();
+        const nameB = (b.表名 || b["表名"] || '').toString();
+        return nameA.localeCompare(nameB);
+    });
+    const content = JSON.stringify(sortedArray);
     
     // 生成简单 hash
     let hash = 0;
@@ -43,59 +50,150 @@ function handleIframeLoad(iframe) {
     
     const loadHandler = function() {
         console.log('content.js: Frame loaded');
-        try {
-            const frameDoc = iframe.contentDocument || iframe.contentWindow.document;
-            const targetDiv = frameDoc.getElementById('tools-list');
-            
-            if (targetDiv) {
-                console.log('content.js: targetDiv found: ', targetDiv);
-                const listItems = targetDiv.querySelectorAll('h4');
-                const tableInfo = [];
+
+
+
+        if (!is_deepseek) {
+            /* 旧版tableInfo提取方式，iframe id = "third-party-page" -> div id = "left" -> li class = "level0"的title属性的值作为表名
+            表名所在的li下面有class为level1的li，class为level1的li的title属性的值作为列名 
+            样例格式[{
+                "表名":"xxx",
+                "列名":"c1,c2,c3"
+        },{
+                "表名":"xxx",
+                "列名":"c1,c2,c3"
+        }]
+            */
+            try {
+                const frameDoc = iframe.contentDocument || iframe.contentWindow.document;
+                const targetDiv = frameDoc.getElementById('left');
                 
-                listItems.forEach(h4Ele => {
-                    tableInfo.push(h4Ele.textContent.trim());
-                });
-
-                console.log('content.js: tableInfo extracted: ', tableInfo);
-
-                //在这里设置测试tableInfo的值
-                var tableInfo1 = `{'表名':'person','表结构': {'pid': '人员id', 'name': '姓名', 'age': '年龄'}}`;
-                var tableInfo2 = `{'表名':'shopping','表结构': {'pid': '人员id', 'goods': '物品', 'time': '购物时间', 'price': '价格'}}`;
-                tableInfo.length = 0;//清空tableInfo数组
-                tableInfo.push(tableInfo1);
-                tableInfo.push(tableInfo2);//添加测试tableInfo
-                console.log('content.js: test tableInfo set: ', tableInfo);
-
-                if (tableInfo && tableInfo.length > 0) {
-                    // 生成唯一标识
-                    const contextId = generateContextId(tableInfo);
-                    currentContextId = contextId;
+                
+                if (targetDiv) {
+                    console.log('content.js: targetDiv found: ', targetDiv);
+                    // 找到所有 class="level0" 的 li 元素
+                    const level0Items = targetDiv.querySelectorAll('li.level0');
+                    const tableInfoArray = [];
                     
-                    console.log('content.js: Generated contextId: ', contextId);
-                    
-                    // 格式化 tableInfo
-                    const tableInfoString = formatTableInfo(tableInfo);
-                    
-                    // 发送给 background.js，携带 contextId
-                    chrome.runtime.sendMessage({
-                        type: 'tableInfo',
-                        contextId: contextId,
-                        tableInfo: tableInfoString
-                    }, function(response) { 
-                        console.log('content.js: tableInfo sent, response: ', response);
-                        if (response && response.status === 'SUCCESS') {
-                            showMinimizedIcon();
+                    level0Items.forEach(level0Li => {
+                        // 获取表名：li.level0 的 title 属性
+                        const tableName = level0Li.getAttribute('title');
+                        if (tableName) {
+                            // 在当前 level0 的 li 下面找到所有 class="level1" 的 li 元素
+                            const level1Items = level0Li.querySelectorAll('li.level1');
+                            const columnNames = [];
+                            
+                            // 获取所有列名：li.level1 的 title 属性
+                            level1Items.forEach(level1Li => {
+                                const columnName = level1Li.getAttribute('title');
+                                if (columnName) {
+                                    columnNames.push(columnName.trim());
+                                }
+                            });
+                            
+                            // 构建表信息对象，格式：{"表名":"xxx","列名":"c1,c2,c3"}
+                            if (columnNames.length > 0) {
+                                tableInfoArray.push({
+                                    "表名": tableName.trim(),
+                                    "列名": columnNames.join(',')
+                                });
+                            }
                         }
                     });
+                    
+                    // 将数组转换为 JSON 字符串
+                    const tableInfo = JSON.stringify(tableInfoArray);
+    
+                    console.log('content.js: tableInfo extracted: ', tableInfo);
+    
+                    if (tableInfoArray && tableInfoArray.length > 0) {
+                        // 生成唯一标识（传入数组）
+                        const contextId = generateContextId(tableInfoArray);
+                        currentContextId = contextId;
+                        
+                        console.log('content.js: Generated contextId: ', contextId);
+                        
+                        // tableInfo 已经是 JSON 字符串格式，直接使用
+                        const tableInfoString = tableInfo;
+                        
+                        // 发送给 background.js，携带 contextId
+                        chrome.runtime.sendMessage({
+                            type: 'tableInfo',
+                            contextId: contextId,
+                            tableInfo: tableInfoString
+                        }, function(response) { 
+                            console.log('content.js: tableInfo sent, response: ', response);
+                            if (response && response.status === 'SUCCESS') {
+                                showMinimizedIcon();
+                            }
+                        });
+                    } else {
+                        console.log('content.js: tableInfo is empty');
+                    }
                 } else {
-                    console.log('content.js: tableInfo is empty');
+                    console.log('content.js: targetDiv not found');
                 }
-            } else {
-                console.log('content.js: targetDiv not found');
+            } catch (error) {
+                console.log('content.js: Error reading iframe:', error);
             }
-        } catch (error) {
-            console.log('content.js: Error reading iframe:', error);
+        } else {
+            try {
+                const frameDoc = iframe.contentDocument || iframe.contentWindow.document;
+                const targetDiv = frameDoc.getElementById('tools-list');
+                
+                
+                if (targetDiv) {
+                    console.log('content.js: targetDiv found: ', targetDiv);
+                    const listItems = targetDiv.querySelectorAll('h4');
+                    const tableInfo = [];
+                    
+                    listItems.forEach(h4Ele => {
+                        tableInfo.push(h4Ele.textContent.trim());
+                    });
+    
+                    console.log('content.js: tableInfo extracted: ', tableInfo);
+    
+                    //在这里设置测试tableInfo的值
+                    var tableInfo1 = `{'表名':'person','表结构': {'pid': '人员id', 'name': '姓名', 'age': '年龄'}}`;
+                    var tableInfo2 = `{'表名':'shopping','表结构': {'pid': '人员id', 'goods': '物品', 'time': '购物时间', 'price': '价格'}}`;
+                    tableInfo.length = 0;//清空tableInfo数组
+                    tableInfo.push(tableInfo1);
+                    tableInfo.push(tableInfo2);//添加测试tableInfo
+                    console.log('content.js: test tableInfo set: ', tableInfo);
+    
+                    if (tableInfo && tableInfo.length > 0) {
+                        // 生成唯一标识
+                        const contextId = generateContextId(tableInfo);
+                        currentContextId = contextId;
+                        
+                        console.log('content.js: Generated contextId: ', contextId);
+                        
+                        // 格式化 tableInfo
+                        const tableInfoString = formatTableInfo(tableInfo);
+                        
+                        // 发送给 background.js，携带 contextId
+                        chrome.runtime.sendMessage({
+                            type: 'tableInfo',
+                            contextId: contextId,
+                            tableInfo: tableInfoString
+                        }, function(response) { 
+                            console.log('content.js: tableInfo sent, response: ', response);
+                            if (response && response.status === 'SUCCESS') {
+                                showMinimizedIcon();
+                            }
+                        });
+                    } else {
+                        console.log('content.js: tableInfo is empty');
+                    }
+                } else {
+                    console.log('content.js: targetDiv not found');
+                }
+            } catch (error) {
+                console.log('content.js: Error reading iframe:', error);
+            }
         }
+
+        
     };
     
     iframe.addEventListener('load', loadHandler);
@@ -125,7 +223,13 @@ function handleIframeClose() {
 // 设置 iframe 监听器
 function setupIframeObserver() {
     // 先检查是否已经存在 iframe
-    let myFrame = document.getElementById('content-frame');
+    let myFrame = null;
+    if (is_deepseek) {
+        myFrame = document.getElementById('content-frame');
+    } else {
+        myFrame = document.getElementById('third-party-page');
+    }
+    
     if (myFrame && !myFrame.dataset.tracked) {
         myFrame.dataset.tracked = 'true';
         handleIframeLoad(myFrame);
@@ -133,7 +237,11 @@ function setupIframeObserver() {
     
     // 使用 MutationObserver 监听 iframe 的创建和销毁
     iframeObserver = new MutationObserver(function(mutations) {
-        const iframe = document.getElementById('content-frame');
+        if (is_deepseek) {
+            const iframe = document.getElementById('content-frame');
+        } else {
+            const iframe = document.getElementById('third-party-page');
+        }
         
         if (iframe) {
             // iframe 存在
